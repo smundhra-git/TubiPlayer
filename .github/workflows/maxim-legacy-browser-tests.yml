@@ -4,7 +4,7 @@ on:
   pull_request:
     branches: [master]
   push:
-    branches: [master, add-maxim-legacy-browser-tests]
+    branches: [master, add-maxim-legacy-browser-tests, break-legacy-browsers]
   workflow_dispatch:
 
 env:
