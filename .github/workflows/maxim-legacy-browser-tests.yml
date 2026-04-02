@@ -4,7 +4,8 @@ on:
   pull_request:
     branches: [master]
   push:
-    branches: [master]
+    branches: [master, add-maxim-legacy-browser-tests]
+  workflow_dispatch:
 
 env:
   AWS_REGION: us-west-2
