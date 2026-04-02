@@ -39,6 +39,19 @@ jobs:
       - name: Pull maxim runner image
         run: docker pull ${{ env.ECR_REGISTRY }}/tanagram/maxim/runner:latest
 
+      - name: Detect custom maxim config
+        id: config
+        run: |
+          if [ -f ".maxim/config.yaml" ]; then
+            echo "path=.maxim/config.yaml" >> "$GITHUB_OUTPUT"
+            echo "mount=-v ${{ github.workspace }}/.maxim/config.yaml:/opt/maxim/configs/custom.yaml" >> "$GITHUB_OUTPUT"
+            echo "name=custom" >> "$GITHUB_OUTPUT"
+          else
+            echo "path=" >> "$GITHUB_OUTPUT"
+            echo "mount=" >> "$GITHUB_OUTPUT"
+            echo "name=smoke-test" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Run Maxim legacy browser tests
         run: |
           mkdir -p ${{ github.workspace }}/maxim-results
@@ -46,9 +59,10 @@ jobs:
             --network host \
             -v /var/run/docker.sock:/var/run/docker.sock \
             -v ${{ github.workspace }}/maxim-results:/results \
+            ${{ steps.config.outputs.mount }} \
             -e TARGET_URL=${{ env.TARGET_URL }} \
             ${{ env.ECR_REGISTRY }}/tanagram/maxim/runner:latest \
-              --config configs/critical-path.yaml \
+              --config configs/${{ steps.config.outputs.name }}.yaml \
               --url ${{ env.TARGET_URL }} \
               --browsers all \
               --parallel 5 \
