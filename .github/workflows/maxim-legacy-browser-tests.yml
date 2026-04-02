@@ -29,29 +29,51 @@ jobs:
           aws ecr get-login-password --region ${{ env.AWS_REGION }} \
             | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
 
+      - name: Pull browser images
+        run: |
+          for img in chromium-38 chromium-44 chromium-46 chromium-53 chromium-66 wpe-webkit; do
+            docker pull ${{ env.ECR_REGISTRY }}/tanagram/maxim/${img}:latest
+          done
+
+      - name: Pull maxim runner image
+        run: docker pull ${{ env.ECR_REGISTRY }}/tanagram/maxim/runner:latest
+
       - name: Run Maxim legacy browser tests
-        uses: tanagram/maxim@main
-        with:
-          url: ${{ env.TARGET_URL }}
-          browsers: all
-          parallel: 5
+        run: |
+          mkdir -p ${{ github.workspace }}/maxim-results
+          docker run --rm \
+            --network host \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v ${{ github.workspace }}/maxim-results:/results \
+            -e TARGET_URL=${{ env.TARGET_URL }} \
+            ${{ env.ECR_REGISTRY }}/tanagram/maxim/runner:latest \
+              --config configs/critical-path.yaml \
+              --url ${{ env.TARGET_URL }} \
+              --browsers all \
+              --parallel 5 \
+              --output /results/
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: maxim-results
-          path: maxim-results/
+          path: ${{ github.workspace }}/maxim-results/
 
       - name: Publish JUnit report
         if: always()
         uses: mikepenz/action-junit-report@v4
         with:
-          report_paths: maxim-results/results.xml
+          report_paths: ${{ github.workspace }}/maxim-results/results.xml
           check_name: Legacy Browser Tests
 
-      - name: Fail on legacy browser breakage
-        if: steps.maxim.outputs.failed != '0'
+      - name: Check for failures
         run: |
-          echo "::error::Maxim detected ${{ steps.maxim.outputs.failed }} legacy browser test failure(s)"
-          exit 1
+          RESULTS="${{ github.workspace }}/maxim-results/results.json"
+          if [ -f "$RESULTS" ]; then
+            FAILED=$(jq '.summary.failed' "$RESULTS")
+            if [ "$FAILED" != "0" ]; then
+              echo "::error::Maxim detected ${FAILED} legacy browser test failure(s)"
+              exit 1
+            fi
+          fi
