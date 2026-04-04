@@ -1,0 +1,91 @@
+name: Maxim Legacy Browser Tests
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master, demo/maxim-integration]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: us-west-2
+  ECR_REGISTRY: 864899829402.dkr.ecr.us-west-2.amazonaws.com
+
+jobs:
+  legacy-browser-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 8
+        uses: actions/setup-java@v4
+        with:
+          distribution: zulu
+          java-version: 8
+
+      - name: Build APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleDebug --no-daemon
+          APK_PATH=$(find app/build -name "*.apk" -type f | head -1)
+          echo "APK_PATH=${APK_PATH}" >> "$GITHUB_ENV"
+          echo "Built APK: ${APK_PATH}"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to ECR
+        run: |
+          aws ecr get-login-password --region ${{ env.AWS_REGION }} \
+            | docker login --username AWS --password-stdin ${{ env.ECR_REGISTRY }}
+
+      - name: Pull maxim runner image
+        run: docker pull ${{ env.ECR_REGISTRY }}/tanagram/maxim/runner:latest
+
+      - name: Pull Android emulator image
+        run: docker pull ${{ env.ECR_REGISTRY }}/tanagram/maxim/android-emulator:latest
+
+      - name: Run Maxim Android tests
+        run: |
+          mkdir -p ${{ github.workspace }}/maxim-results
+          docker run --rm \
+            --network host \
+            -v /var/run/docker.sock:/var/run/docker.sock \
+            -v ${{ github.workspace }}/maxim-results:/results \
+            -v ${{ github.workspace }}/${APK_PATH}:/app.apk:ro \
+            -e TARGET_URL=app:///com.tubitv.demo \
+            ${{ env.ECR_REGISTRY }}/tanagram/maxim/runner:latest \
+              --config configs/android-smoke-test.yaml \
+              --url app:///com.tubitv.demo \
+              --browsers android \
+              --parallel 1 \
+              --output /results/
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maxim-results
+          path: ${{ github.workspace }}/maxim-results/
+
+      - name: Publish JUnit report
+        if: always()
+        uses: mikepenz/action-junit-report@v4
+        with:
+          report_paths: ${{ github.workspace }}/maxim-results/results.xml
+          check_name: Maxim Android Tests
+
+      - name: Check for failures
+        run: |
+          RESULTS="${{ github.workspace }}/maxim-results/results.json"
+          if [ -f "$RESULTS" ]; then
+            FAILED=$(jq '.summary.failed' "$RESULTS")
+            if [ "$FAILED" != "0" ]; then
+              echo "::error::Maxim detected ${FAILED} test failure(s)"
+              exit 1
+            fi
+          fi
